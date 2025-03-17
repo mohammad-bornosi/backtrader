@@ -27,6 +27,10 @@ import matplotlib.collections as mcol
 import matplotlib.colors as mcolors
 import matplotlib.legend as mlegend
 import matplotlib.lines as mlines
+import matplotlib.pyplot as plt
+import datetime
+import mpld3
+from .. import date2num, num2date
 
 from .utils import shade_color
 
@@ -49,8 +53,12 @@ class CandlestickPlotHandler(object):
                  fillup=True,
                  filldown=True,
                  **kwargs):
-
+        
         # Manager up/down bar colors
+        # self.legend_opens = opens
+        # self.legend_highs = highs
+        # self.legend_lows = lows
+        # self.legend_closes = closes
         r, g, b = mcolors.colorConverter.to_rgb(colorup)
         self.colorup = r, g, b, alpha
         r, g, b = mcolors.colorConverter.to_rgb(colordown)
@@ -81,6 +89,7 @@ class CandlestickPlotHandler(object):
         else:
             self.tickdown = self.edgedown
 
+        width = 2
         self.barcol, self.tickcol = self.barcollection(
             x, opens, highs, lows, closes,
             width, tickwidth, edgeadjust,
@@ -100,14 +109,14 @@ class CandlestickPlotHandler(object):
         mlegend.Legend.update_default_handler_map({self.barcol: self})
 
     def legend_artist(self, legend, orig_handle, fontsize, handlebox):
-        x0 = handlebox.xdescent
-        y0 = handlebox.ydescent
+        x0 = 0 
+        y0 = handlebox.ydescent 
         width = handlebox.width / len(self.legend_opens)
         height = handlebox.height
 
         # Generate the x axis coordinates (handlebox based)
         xs = [x0 + width * (i + 0.5) for i in range(len(self.legend_opens))]
-
+    
         barcol, tickcol = self.barcollection(
             xs,
             self.legend_opens, self.legend_highs,
@@ -148,15 +157,31 @@ class CandlestickPlotHandler(object):
         tickcolors = [tickcolord[o < c] for o, c in oc()]
 
         delta = width / 2 - edgeadjust
-
         def barbox(i, open, close):
             # delta seen as closure
             left, right = i - delta, i + delta
             open = open * scaling + bot
             close = close * scaling + bot
             return (left, open), (left, close), (right, close), (right, open)
+        
+        # def modified_barbox(i, open, close, last_right):
+        #     # delta seen as closure
+        #     left, right = last_right, last_right + 2 * delta
+        #     print(f'thats left {left}')
+        #     print(f'thats right {right}')
+        #     open = open * scaling + bot
+        #     close = close * scaling + bot
+        #     return (left, open), (left, close), (right, close), (right, open)
+
 
         barareas = [barbox(i, o, c) for i, o, c in xoc()]
+        # barareas = []
+        # last_right = 0
+        # for i, o, c in xoc() :
+        #     bararea = modified_barbox(i, o, c, last_right)
+        #     (last_right, last_open) = bararea[-1]
+        #     barareas.append(bararea)
+        #     print(f'show me barareas {barareas}')
 
         def tup(i, open, high, close):
             high = high * scaling + bot
@@ -208,8 +233,7 @@ class CandlestickPlotHandler(object):
         return barcol, tickcol
 
 
-def plot_candlestick(ax,
-                     x, opens, highs, lows, closes,
+def plot_candlestick(ax, x, opens, highs, lows, closes,
                      colorup='k', colordown='r',
                      edgeup=None, edgedown=None,
                      tickup=None, tickdown=None,
@@ -220,7 +244,7 @@ def plot_candlestick(ax,
                      fillup=True,
                      filldown=True,
                      **kwargs):
-
+    
     chandler = CandlestickPlotHandler(
         ax, x, opens, highs, lows, closes,
         colorup, colordown,

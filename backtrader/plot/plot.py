@@ -37,14 +37,20 @@ import matplotlib.legend as mlegend
 import matplotlib.ticker as mticker
 
 from ..utils.py3 import range, with_metaclass, string_types, integer_types
-from .. import AutoInfoClass, MetaParams, TimeFrame, date2num
+from .. import AutoInfoClass, MetaParams, TimeFrame, date2num, num2date
 
 from .finance import plot_candlestick, plot_ohlc, plot_volume, plot_lineonclose
+from .customplothandler import tf_plot_candlestick
 from .formatters import (MyVolFormatter, MyDateFormatter, getlocator)
 from . import locator as loc
 from .multicursor import MultiCursor
 from .scheme import PlotScheme
 from .utils import tag_box_style
+from matplotlib.dates import DateFormatter
+import matplotlib.pyplot as plt
+import pandas as pd
+from matplotlib.ticker import FuncFormatter
+from matplotlib.widgets import Slider
 
 
 class PInfo(object):
@@ -76,7 +82,7 @@ class PInfo(object):
         self.row = 0
         self.sharex = None
         return fig
-
+        
     def nextcolor(self, ax):
         self.coloridx[ax] += 1
         return self.coloridx[ax]
@@ -196,19 +202,21 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
             for data in strategy.datas:
                 if not data.plotinfo.plot:
                     continue
-
+                
                 self.pinf.xdata = self.pinf.x
                 xd = data.datetime.plotrange(self.pinf.xstart, self.pinf.xend)
-                if len(xd) < self.pinf.xlen:
+                 
+                if (len(xd) < self.pinf.xlen):
+     
                     self.pinf.xdata = xdata = []
                     xreal = self.pinf.xreal
-                    dts = data.datetime.plot()
+                    dts = data.datetime.plot()                
                     xtemp = list()
                     for dt in (x for x in dts if dt0 <= x <= dt1):
                         dtidx = bisect.bisect_left(xreal, dt)
-                        xdata.append(dtidx)
+                        xdata.append(xreal[dtidx])
                         xtemp.append(dt)
-
+                    
                     self.pinf.xstart = bisect.bisect_left(dts, xtemp[0])
                     self.pinf.xend = bisect.bisect_right(dts, xtemp[-1])
 
@@ -230,20 +238,11 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
                         upinds=self.dplotsup[ind],
                         downinds=self.dplotsdown[ind])
 
-            cursor = MultiCursor(
-                fig.canvas, list(self.pinf.daxis.values()),
-                useblit=True,
-                horizOn=True, vertOn=True,
-                horizMulti=False, vertMulti=True,
-                horizShared=True, vertShared=False,
-                color='black', lw=1, ls=':')
-
-            self.pinf.cursors.append(cursor)
-
+            
             # Put the subplots as indicated by hspace
             fig.subplots_adjust(hspace=self.pinf.sch.plotdist,
-                                top=0.98, left=0.05, bottom=0.05, right=0.95)
-
+                                top=0.98, left=0.05, bottom=0.45, right=0.95)
+            
             laxis = list(self.pinf.daxis.values())
 
             # Find last axis which is not a twinx (date locator fails there)
@@ -254,31 +253,90 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
                     break
 
                 i -= 1
+            # Set the initial axis limits and labels
+            window_size= 100
+            lastax.set_xlim(0, window_size - 1)
 
-            self.setlocators(lastax)  # place the locators/fmts
+            # Dynamic x-axis label
+            xaxis_mapping = dict(zip(self.pinf.xdata, self.pinf.xreal))
+        
+            label_list = self.label_method(xaxis_mapping, lastax)
+            lastax.set_xticks(self.pinf.xdata)
+            lastax.set_xticklabels(label_list)
+            
+            for label in lastax.get_xticklabels():
+                label.set_rotation(90)
+            ax_slider = plt.axes([0.2, 0.1, 0.6, 0.03], facecolor='lightgoldenrodyellow')
+            slider = Slider(ax_slider, 'Position', 0, self.pinf.xlen - window_size, valinit=0, valstep=1)
 
-            # Applying fig.autofmt_xdate if the data axis is the last one
-            # breaks the presentation of the date labels. why?
-            # Applying the manual rotation with setp cures the problem
-            # but the labels from all axis but the last have to be hidden
-            for ax in laxis:
-                self.mpyplot.setp(ax.get_xticklabels(), visible=False)
+            # MultiCursor widget to display crosshairs across both subplots
+            
+            cursor = MultiCursor(
+                fig.canvas, list(self.pinf.daxis.values()),
+                useblit=True,
+                horizOn=True, vertOn=True,
+                horizMulti=False, vertMulti=True,
+                horizShared=True, vertShared=False,
+                color='black', lw=1, ls=':')
 
-            self.mpyplot.setp(lastax.get_xticklabels(), visible=True,
-                              rotation=self.pinf.sch.tickrotation)
+            self.pinf.cursors.append(cursor)
 
-            # Things must be tight along the x axis (to fill both ends)
-            axtight = 'x' if not self.pinf.sch.ytight else 'both'
-            self.mpyplot.autoscale(enable=True, axis=axtight, tight=True)
+            # Update function for the slider
+            def update(val):
+                pos = int(slider.val)  # Current position of the window
+                
+                # Update data for both lines
+                # lastax.set_xdata(xreal[pos:pos + window_size])
+                # lastax.set_ydata(y_data1[pos:pos + window_size])
+                
+                # Update x-axis limit
+                lastax.set_xlim(pos, pos + window_size - 1)
+                
+                # Update dynamic x-axis label
+                #it has been addressed
+                
+                fig.canvas.draw_idle()
+
+            # Attach the update function to the slider
+            slider.on_changed(update)
+
+            plt.show()
 
         return figs
 
+    def label_method(self, xaxis_mapping, lastax):
+        trading_time = '17'
+        start_date = num2date(xaxis_mapping[0]).strftime('%Y-%m-%d %H:%M')
+        start_flag = True
+        current_day = start_date.split(" ")[0].split('-')[-1]
+        last_day = start_date.split(" ")[0].split('-')[-1]
+        initial_candles = 10
+        lastax.set_xlim([0, initial_candles])
+            
+        xaxis_mapping = dict(zip(self.pinf.xdata, self.pinf.xreal))
+        label_list = []
+        for idx in self.pinf.xdata :
+            current_date = num2date(xaxis_mapping[idx]).strftime('%Y-%m-%d %H:%M')
+            current_day = current_date.split(" ")[0].split('-')[-1]
+            current_hour = current_date.split(" ")[-1].split('-')[0]
+            if(current_hour >= trading_time):
+                label_list.append(current_date)
+                last_day = current_day
+            elif ((current_day != last_day) or (start_flag == True)) : 
+                label_list.append(current_day)
+                last_day = current_day
+            else : 
+                label_list.append(" ")
+            start_flag = False
+        
+        return label_list
+    
     def setlocators(self, ax):
         clock = sorted(self.pinf.clock.datas,
                        key=lambda x: (x._timeframe, x._compression))[0]
 
         comp = getattr(clock, '_compression', 1)
-        tframe = getattr(clock, '_timeframe', TimeFrame.Days)
+        tframe = getattr(clock, '_timeframe', TimeFrame.Minutes)
 
         if self.pinf.sch.fmt_x_data is None:
             if tframe == TimeFrame.Years:
@@ -293,12 +351,14 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
                 fmtdata = '%Y-%m-%d %H:%M'
             elif tframe == TimeFrame.Seconds:
                 fmtdata = '%Y-%m-%d %H:%M:%S'
+                print('second timeframe has been selected')
             elif tframe == TimeFrame.MicroSeconds:
                 fmtdata = '%Y-%m-%d %H:%M:%S.%f'
             elif tframe == TimeFrame.Ticks:
                 fmtdata = '%Y-%m-%d %H:%M:%S.%f'
         else:
             fmtdata = self.pinf.sch.fmt_x_data
+            print('fmt_x_data is none')
 
         fordata = MyDateFormatter(self.pinf.xreal, fmt=fmtdata)
         for dax in self.pinf.daxis.values():
@@ -309,9 +369,11 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
         ax.xaxis.set_major_locator(locmajor)
         if self.pinf.sch.fmt_x_ticks is None:
             autofmt = loc.AutoDateFormatter(self.pinf.xreal, locmajor)
+            print('locmajor is formatter')
         else:
             autofmt = MyDateFormatter(self.pinf.xreal,
                                       fmt=self.pinf.sch.fmt_x_ticks)
+            print('fmt_x_ticks is formatter')
         ax.xaxis.set_major_formatter(autofmt)
 
     def calcrows(self, strategy):
@@ -647,7 +709,7 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
                              subinds=self.dplotsover[upind],
                              upinds=self.dplotsup[upind],
                              downinds=self.dplotsdown[upind])
-
+                  
         opens = data.open.plotrange(self.pinf.xstart, self.pinf.xend)
         highs = data.high.plotrange(self.pinf.xstart, self.pinf.xend)
         lows = data.low.plotrange(self.pinf.xstart, self.pinf.xend)
@@ -703,25 +765,29 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
             else:
                 self.pinf.nextcolor(axdatamaster)
                 color = self.pinf.color(axdatamaster)
-
+      
             plotted = plot_lineonclose(
-                ax, self.pinf.xdata, closes,
+                ax, self.pinf.xdata , closes,
                 color=color, label=datalabel)
         else:
-            if self.pinf.sch.linevalues and plinevalues:
-                datalabel += ' O:%.2f H:%.2f L:%.2f C:%.2f' % \
-                             (opens[-1], highs[-1], lows[-1], closes[-1])
+            # if self.pinf.sch.linevalues and plinevalues:
+            #     datalabel += ' O:%.2f H:%.2f L:%.2f C:%.2f' % \
+            #                  (opens[-1], highs[-1], lows[-1], closes[-1])
             if self.pinf.sch.style.startswith('candle'):
-                plotted = plot_candlestick(
-                    ax, self.pinf.xdata, opens, highs, lows, closes,
+                xaxis_mapping = dict(zip(self.pinf.xdata, self.pinf.xreal))
+                plotted = plot_candlestick(ax=ax, x=self.pinf.xdata, opens=opens, highs=highs, lows=lows, closes=closes,
                     colorup=self.pinf.sch.barup,
                     colordown=self.pinf.sch.bardown,
                     label=datalabel,
                     alpha=self.pinf.sch.baralpha,
                     fillup=self.pinf.sch.barupfill,
-                    filldown=self.pinf.sch.bardownfill)
+                    filldown=self.pinf.sch.bardownfill)   
+                # new_ax = plotted[0].axes
+                # new_ax.set_xticklabels(num2date(xaxis_mapping[idx]).strftime('%Y-%m-%d %H:%M') for idx in self.pinf.xdata)
+                # plotted_figure = plotted[0].get_figure()
+                # plotted_figure.savefig('figures.jpg')
 
-            elif self.pinf.sch.style.startswith('bar') or True:
+            elif self.pinf.sch.style.startswith('bar'):
                 # final default option -- should be "else"
                 plotted = plot_ohlc(
                     ax, self.pinf.xdata, opens, highs, lows, closes,
@@ -729,6 +795,7 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
                     colordown=self.pinf.sch.bardown,
                     label=datalabel)
 
+        # self.pinf.zorder[new_ax] = plotted[0].get_zorder()
         self.pinf.zorder[ax] = plotted[0].get_zorder()
 
         # Code to place a label at the right hand side with the last value
@@ -739,11 +806,12 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
                          edgecolor=self.pinf.sch.loc)
 
         ax.yaxis.set_major_locator(mticker.MaxNLocator(prune='both'))
+        # new_ax.yaxis.set_major_locator(mticker.MaxNLocator(prune='both'))
         # make sure "over" indicators do not change our scale
         if data.plotinfo._get('plotylimited', True):
             if axdatamaster is None:
                 ax.set_ylim(ax.get_ylim())
-
+                # new_ax.set_ylim(new_ax.get_ylim())
         if self.pinf.sch.volume:
             # if not self.pinf.sch.voloverlay:
             if not voloverlay:
@@ -754,14 +822,22 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
                 if self.pinf.sch.volpushup:
                     # push up overlaid axis by lowering the bottom limit
                     axbot, axtop = ax.get_ylim()
+                    # axbot, axtop = new_ax.get_ylim()
                     axbot *= (1.0 - self.pinf.sch.volpushup)
                     ax.set_ylim(axbot, axtop)
+                    # new_ax.set_ylim(axbot, axtop)
+
 
         for ind in indicators:
             self.plotind(data, ind, subinds=self.dplotsover[ind], masterax=ax)
+            # self.plotind(data, ind, subinds=self.dplotsover[ind], masterax=new_ax)
+
 
         handles, labels = ax.get_legend_handles_labels()
+        # handles, labels = new_ax.get_legend_handles_labels()
+
         a = axdatamaster or ax
+        # a = axdatamaster or new_ax
         if handles:
             # put data and volume legend entries in the 1st positions
             # because they are "collections" they are considered after Line2D
@@ -781,7 +857,11 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
 
             if axdatamaster is None:
                 self.pinf.handles[ax] = handles
+                # self.pinf.handles[new_ax] = handles
+
                 self.pinf.labels[ax] = labels
+                # self.pinf.labels[new_ax] = labels
+
             else:
                 self.pinf.handles[axdatamaster] = handles
                 self.pinf.labels[axdatamaster] = labels
@@ -793,11 +873,13 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
 
             axlegend = a
             loc = data.plotinfo.legendloc or self.pinf.sch.legenddataloc
+            # print(f'what is actually loc : {loc}')
             legend = axlegend.legend(h, l,
                                      loc=loc,
                                      frameon=False, shadow=False,
                                      fancybox=False, prop=self.pinf.prop,
                                      numpoints=1, ncol=1)
+            # legend.axes.set_xticklabels(num2date(xaxis_mapping[idx]).strftime('%Y-%m-%d %H:%M') for idx in self.pinf.xdata)
 
             # hack: if title is set. legend has a Vbox for the labels
             # which has a default "center" set
@@ -884,3 +966,4 @@ class Plot_OldSync(with_metaclass(MetaParams, object)):
 
 
 Plot = Plot_OldSync
+
